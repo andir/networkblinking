@@ -1,0 +1,8 @@
+[package]
+name = "networkblinking"
+version = "0.1.0"
+authors = ["Andreas Rammhold <andreas@rammhold.de>"]
+
+[dependencies]
+bytes = "0.4.4"
+rand = "0.3.16"

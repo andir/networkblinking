@@ -1,82 +1,92 @@
+extern crate bytes;
 use std::time::{Duration, Instant};
 use std::thread::sleep;
 use std::net::UdpSocket;
 use std::convert::AsRef;
-struct Pixel {
+use std::io::Write;
+use bytes::{BytesMut, BufMut, BigEndian, Bytes};
+use bytes::buf::Iter;
+
+mod blinking;
+
+pub struct Frame {
+    buffer: BytesMut,
+    capacity: usize,
+}
+
+
+impl Frame {
+    fn new(size: usize) -> Frame {
+        let capacity = size * (3 * 4);
+        println!("capacity: {}", capacity);
+        Frame {
+            capacity: capacity,
+            buffer: BytesMut::with_capacity(capacity),
+        }
+    }
+
+    fn write(&mut self, p: Pixel) {
+        self.write_f32(p.h);
+        self.write_f32(p.s);
+        self.write_f32(p.v);
+    }
+
+    fn write_f32(&mut self, value: f32) {
+        self.buffer.put_f32::<BigEndian>(value);
+    }
+
+    fn take(&mut self) -> &BytesMut {
+        let b = &self.buffer;
+        b
+    }
+    fn reset(&mut self) {
+        unsafe {
+            self.buffer.set_len(0);
+        }
+    }
+}
+
+pub trait Effect {
+    fn at(&mut self, u: usize) -> Pixel;
+}
+
+pub struct Pixel {
     h: f32,
     s: f32,
     v: f32,
 }
 
-impl Pixel {
-    fn size() -> usize {
-        32
-    }
-    fn serialize(&self) -> [u8; 32] {
-        let h: [u8; 4] = unsafe { std::mem::transmute(self.h) };
-        let s: [u8; 4] = unsafe { std::mem::transmute(self.s) };
-        let v: [u8; 4] = unsafe { std::mem::transmute(self.v) };
-        let mut arr = [0u8; 32];
-        for (place, element) in arr.iter_mut().zip(
-            vec![h, s, v].iter().flat_map(|s| s.iter()),
-        )
-        {
-            *place = *element;
-        }
-        arr
-    }
-}
-
-struct Frame {
-    pixels: Vec<Pixel>,
-}
-
-impl Frame {
-    fn size(&self) -> usize {
-        return self.pixels.len() * Pixel::size();
-    }
-    fn serialize(&self) -> std::vec::Vec<u8> {
-        let s = self.size();
-        let mut v: std::vec::Vec<u8> = vec![0; s];
-        let pixelflut: std::vec::Vec<[u8; 32]> =
-            self.pixels.iter().map(|p| p.serialize()).collect();
-        for (place, element) in v.iter_mut().zip(pixelflut.iter().flat_map(|s| s.iter())) {
-            *place = *element
-        }
-        v
-    }
-}
-
 fn main() {
-
-    let target_time = Duration::new(0, ((1000 * 1000 * 1000) / 1000));
+    let pixel_count = 120;
+    let mut socket = UdpSocket::bind("0.0.0.0:0").expect("couldn't bind to address");
+    let target_time = Duration::new(0, ((1000 * 1000 * 1000) / 30));
     let mut i = 0;
+
+    let mut frame = Frame::new(pixel_count);
+    let mut tot = Duration::new(0, 0);
+    let mut eff = blinking::Blinking{};
     loop {
-        let mut pixels: std::vec::Vec<Pixel> = vec![];
-        for n in 1..2000 {
-            pixels.push(Pixel {
-                h: 0.0,
-                s: 0.0,
-                v: 0.0,
-            });
-        }        let frame = Frame { pixels: pixels };
-        let encoded: std::boxed::Box<[u8]> = frame.serialize().into_boxed_slice();
-        let mut socket = UdpSocket::bind("0.0.0.0:0").expect("couldn't bind to address");
-        let data: &[u8] = encoded.as_ref();
+        frame.reset();
+        for n in 1..pixel_count {
+            frame.write(eff.at(n));
+        }
+
+        let bytes = frame.take();
         let now = Instant::now();
-        socket.send_to(data, "127.0.0.1:1337").expect(
+        socket.send_to(bytes.as_ref(), "172.23.97.151:1337").expect(
             "couldn't send data",
         );
-        if i % 30 == 0 {
-            println!("frame: {}", i);
-            println!("time: {:?}", now);
-        }
+
         i += 1;
         let elapsed = now.elapsed();
-//        let diff = target_time - elapsed;
-//        std::thread::sleep(diff);
-        if i == 5000 {
-            break;
+        let diff = target_time - elapsed;
+        std::thread::sleep(diff);
+        if (i % 100 == 0) {
+            println!("frame time: {:?}", tot / i);
         }
+        tot += elapsed;
+        //        if i == 5000 {
+        //            break;
+        //        }
     }
 }
